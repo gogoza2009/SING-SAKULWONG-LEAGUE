@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>สกอร์บอร์ดลีกฟุตบอล</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Warm Neutrals and Soft Teal -->
+    <!-- Application Structure Plan: A dashboard-style SPA. The main view is a large, dynamic league table. A sidebar (or stacked on mobile) contains interactive panels for: 1) Managing teams (add/delete). 2) Logging match results. 3) Displaying visual analytics (charts) of the league data. This structure separates data display from data input, providing a clear user flow. Users view the main table, input data in the panels, and see the table and charts update instantly, creating a cohesive and intuitive experience. Additionally, a public view mode is introduced via URL parameter, which hides management panels and only shows the scoreboard and analytics, making it suitable for sharing. -->
+    <!-- Visualization & Content Choices: 
+        - League Table: Report Info -> Team stats (W, D, L, Pts, etc). Goal -> Compare/Inform. Viz -> HTML Table. Interaction -> Dynamic updates on data change, row hover/click highlights, clickable rows for detailed stats. Justification -> Standard, clear format for rankings.
+        - Points Comparison: Report Info -> Team points. Goal -> Compare. Viz -> Chart.js Horizontal Bar Chart. Interaction -> Updates with table. Justification -> Excellent for visual comparison of team performance.
+        - Team W/D/L Record: Report Info -> Win/Draw/Loss stats per team. Goal -> Inform. Viz -> Chart.js Doughnut Chart. Interaction -> Updates on table row click to show selected team's data. Justification -> Shows proportional breakdown of a single team's results clearly.
+        - Data Input: Report Info -> Process of adding teams/matches. Goal -> Data Entry. Viz -> HTML Forms. Interaction -> Dropdowns populated by team list, button clicks trigger updates. Justification -> Standard and error-reducing method for user input.
+        - Public View Toggle: Report Info -> Sharing scoreboard. Goal -> Information dissemination. Viz -> URL Parameter/Conditional Rendering. Interaction -> Hides management panels for a clean view. Justification -> Provides a dedicated, simplified view for sharing.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Sarabun', sans-serif;
+            background-color: #f8fafc; /* slate-50 */
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 280px;
+            max-height: 300px;
+        }
+        @media (min-width: 768px) {
+            .chart-container {
+                height: 320px;
+                max-height: 350px;
+            }
+        }
+        .table-responsive {
+            display: block;
+            width: 100%;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            transition: opacity 0.3s ease;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #0d9488; /* teal-600 */
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="text-slate-800">
+
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="spinner"></div>
+    </div>
+
+    <div class="container mx-auto p-4 sm:p-6 lg:p-8">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-teal-700">สกอร์บอร์ดลีกฟุตบอล</h1>
+            <p class="text-slate-500 mt-2">จัดการและติดตามผลการแข่งขันลีกของคุณได้ในที่เดียว</p>
+            <p id="user-id-display" class="text-xs text-slate-400 mt-1"></p>
+            <div id="share-link-section" class="mt-4 p-3 bg-teal-100 rounded-lg text-sm text-teal-800 hidden">
+                <p class="font-semibold mb-2">ลิงก์สำหรับแชร์ตารางคะแนน:</p>
+                <div class="flex items-center justify-center space-x-2">
+                    <input type="text" id="share-link-input" class="w-full p-2 rounded-lg border border-teal-300 bg-white" readonly>
+                    <button id="copy-share-link-btn" class="bg-teal-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-teal-700 transition-colors">คัดลอก</button>
+                </div>
+                <p class="mt-2 text-xs">ผู้ที่เปิดลิงก์นี้จะเห็นเฉพาะตารางอันดับและสถิติเท่านั้น</p>
+            </div>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            <!-- Left Column: League Table -->
+            <section class="lg:col-span-2 bg-white p-4 sm:p-6 rounded-2xl shadow-lg">
+                <h2 class="text-2xl font-bold mb-4 text-slate-700">ตารางอันดับ</h2>
+                <div id="league-table-container" class="table-responsive">
+                    <!-- Dynamic League Table will be rendered here -->
+                </div>
+            </section>
+
+            <!-- Right Column: Management & Analytics -->
+            <aside id="management-analytics-aside" class="lg:col-span-1 space-y-8">
+                
+                <!-- Match Result Form -->
+                <section id="match-form-section" class="bg-white p-4 sm:p-6 rounded-2xl shadow-lg">
+                    <h2 class="text-2xl font-bold mb-4 text-slate-700">บันทึกผลการแข่งขัน</h2>
+                    <p class="text-slate-500 text-sm mb-4">เลือกทีมและใส่ผลการแข่งขันเพื่ออัปเดตตารางคะแนน</p>
+                    <form id="match-form" class="space-y-4">
+                        <div class="flex items-center space-x-2">
+                            <select id="home-team" name="home-team" class="w-full p-2 border border-slate-300 rounded-lg bg-slate-50 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition" required></select>
+                            <input type="number" id="home-score" name="home-score" min="0" placeholder="สกอร์" class="w-20 p-2 text-center border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition" required>
+                        </div>
+                        <div class="text-center font-semibold text-slate-500">VS</div>
+                        <div class="flex items-center space-x-2">
+                            <select id="away-team" name="away-team" class="w-full p-2 border border-slate-300 rounded-lg bg-slate-50 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition" required></select>
+                            <input type="number" id="away-score" name="away-score" min="0" placeholder="สกอร์" class="w-20 p-2 text-center border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition" required>
+                        </div>
+                        <div class="flex space-x-2">
+                            <button type="submit" id="submit-match-btn" class="flex-grow bg-teal-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-teal-700 transition-colors duration-300 shadow-md">บันทึกผล</button>
+                            <button type="button" id="cancel-edit-btn" class="hidden flex-grow bg-slate-400 text-white font-bold py-3 px-4 rounded-lg hover:bg-slate-500 transition-colors duration-300 shadow-md">ยกเลิก</button>
+                        </div>
+                    </form>
+                </section>
+
+                <!-- Match History -->
+                <section class="bg-white p-4 sm:p-6 rounded-2xl shadow-lg">
+                    <h2 class="text-2xl font-bold mb-4 text-slate-700">ประวัติการแข่งขัน</h2>
+                    <p class="text-slate-500 text-sm mb-4">คลิก "แก้ไข" เพื่อเปลี่ยนผล หรือ "ลบ" เพื่อนำออก</p>
+                    <div id="match-history-list" class="space-y-3 max-h-64 overflow-y-auto pr-2">
+                        <!-- Dynamic match list will be rendered here -->
+                    </div>
+                </section>
+
+                <!-- Analytics -->
+                <section class="bg-white p-4 sm:p-6 rounded-2xl shadow-lg">
+                    <h2 class="text-2xl font-bold mb-4 text-slate-700">ภาพรวมสถิติ</h2>
+                    <div class="space-y-6">
+                        <div>
+                            <h3 class="font-semibold text-slate-600 mb-2">อันดับคะแนนรวม</h3>
+                            <div class="chart-container">
+                                <canvas id="points-chart"></canvas>
+                            </div>
+                        </div>
+                        <div>
+                            <h3 id="team-stats-title" class="font-semibold text-slate-600 mb-2">สถิติ ชนะ/เสมอ/แพ้</h3>
+                             <div class="chart-container" style="height: 240px; max-height: 250px;">
+                                <canvas id="team-w-d-l-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Team Management -->
+                <section class="bg-white p-4 sm:p-6 rounded-2xl shadow-lg">
+                    <h2 class="text-2xl font-bold mb-4 text-slate-700">จัดการทีม</h2>
+                    <form id="team-form" class="flex space-x-2 mb-4">
+                        <input type="text" id="team-name" placeholder="เพิ่มชื่อทีมใหม่" class="w-full p-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition">
+                        <button type="submit" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors shadow-md">เพิ่ม</button>
+                    </form>
+                    <div id="team-list" class="space-y-2 max-h-48 overflow-y-auto pr-2">
+                        <!-- Dynamic team list will be rendered here -->
+                    </div>
+                </section>
+
+            </aside>
+        </main>
+    </div>
+    
+    <!-- Modal for notifications -->
+    <div id="modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 transition-opacity duration-300 opacity-0 pointer-events-none">
+        <div id="modal-content" class="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm text-center transform scale-95 transition-transform duration-300">
+            <p id="modal-message" class="text-lg text-slate-700"></p>
+            <button id="modal-close" class="mt-4 bg-teal-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-teal-700 transition-colors">ตกลง</button>
+        </div>
+    </div>
+
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    // Global variables provided by Canvas environment
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+    let app;
+    let db;
+    let auth;
+    let userId;
+
+    // --- STATE MANAGEMENT ---
+    let teams = [];
+    let matches = [];
+    let editingMatchId = null;
+
+    let TEAMS_COLLECTION;
+    let MATCHES_COLLECTION;
+
+    // --- CHART.JS INSTANCES ---
+    let pointsChart, teamWDLChart;
+    const chartFont = { family: 'Sarabun' };
+
+    // --- MODAL/NOTIFICATION LOGIC ---
+    const modal = document.getElementById('modal');
+    const modalContent = document.getElementById('modal-content');
+    const modalMessage = document.getElementById('modal-message');
+    const modalClose = document.getElementById('modal-close');
+    const loadingOverlay = document.getElementById('loading-overlay');
+
+    function showModal(message) {
+        modalMessage.textContent = message;
+        modal.classList.remove('opacity-0', 'pointer-events-none');
+        modalContent.classList.remove('scale-95');
+    }
+
+    modalClose.addEventListener('click', () => {
+        modal.classList.add('opacity-0', 'pointer-events-none');
+        modalContent.classList.add('scale-95');
+    });
+
+    // --- FIREBASE LISTENERS ---
+    function initFirestoreListeners() {
+        if (!db) {
+            console.error("Firestore not initialized.");
+            showModal("Firestore ยังไม่พร้อมใช้งาน.");
+            loadingOverlay.classList.add('hidden');
+            return;
+        }
+
+        loadingOverlay.classList.remove('hidden');
+
+        TEAMS_COLLECTION = `artifacts/${appId}/public/data/teams`;
+        MATCHES_COLLECTION = `artifacts/${appId}/public/data/matches`;
+
+        // Listen for teams changes
+        onSnapshot(collection(db, TEAMS_COLLECTION), (snapshot) => {
+            teams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            teams.sort((a,b) => a.name.localeCompare(b.name, 'th')); // Sort locally by name for consistent dropdowns
+            mainRender();
+            loadingOverlay.classList.add('hidden');
+        }, (error) => {
+            console.error("Error fetching teams:", error);
+            showModal("ข้อผิดพลาดในการดึงข้อมูลทีม: " + error.message);
+            loadingOverlay.classList.add('hidden');
+        });
+
+        // Listen for matches changes
+        onSnapshot(collection(db, MATCHES_COLLECTION), (snapshot) => {
+            matches = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            mainRender();
+            loadingOverlay.classList.add('hidden');
+        }, (error) => {
+            console.error("Error fetching matches:", error);
+            showModal("ข้อผิดพลาดในการดึงข้อมูลการแข่งขัน: " + error.message);
+            loadingOverlay.classList.add('hidden');
+        });
+    }
+
+    // --- LOCAL DATA INITIALIZATION (Fallback if no Firebase) ---
+    function initLocalData() {
+        teams = [
+            { id: '1', name: 'ทีม A' },
+            { id: '2', name: 'ทีม B' },
+            { id: '3', name: 'ทีม C' },
+            { id: '4', name: 'ทีม D' }
+        ];
+        matches = [
+            { id: 'm1', homeTeamId: '1', awayTeamId: '2', homeScore: 3, awayScore: 1 },
+            { id: 'm2', homeTeamId: '3', awayTeamId: '4', homeScore: 0, awayScore: 0 },
+            { id: 'm3', homeTeamId: '1', awayTeamId: '3', homeScore: 2, awayScore: 2 },
+            { id: 'm4', homeTeamId: '2', awayTeamId: '4', homeScore: 1, awayScore: 2 },
+        ];
+        // For local mode, generate numeric IDs if needed, but Firestore uses string IDs.
+        // For simplicity, we'll keep the mock IDs as strings like Firestore
+    }
+
+
+    // --- CORE CALCULATION LOGIC ---
+    function calculateTableData() {
+        let stats = teams.map(team => ({
+            id: team.id,
+            name: team.name,
+            played: 0,
+            win: 0,
+            draw: 0,
+            loss: 0,
+            goalsFor: 0,
+            goalsAgainst: 0,
+            goalDifference: 0,
+            points: 0
+        }));
+
+        matches.forEach(match => {
+            const homeStat = stats.find(s => s.id === match.homeTeamId);
+            const awayStat = stats.find(s => s.id === match.awayTeamId);
+
+            if (!homeStat || !awayStat) return;
+
+            homeStat.played++;
+            awayStat.played++;
+            homeStat.goalsFor += match.homeScore;
+            awayStat.goalsFor += match.awayScore;
+            homeStat.goalsAgainst += match.awayScore;
+            awayStat.goalsAgainst += match.homeScore;
+
+            if (match.homeScore > match.awayScore) {
+                homeStat.win++;
+                awayStat.loss++;
+                homeStat.points += 3;
+            } else if (match.homeScore < match.awayScore) {
+                awayStat.win++;
+                homeStat.loss++;
+                awayStat.points += 3;
+            } else {
+                homeStat.draw++;
+                awayStat.draw++;
+                homeStat.points += 1;
+                awayStat.points += 1;
+            }
+        });
+
+        stats.forEach(stat => {
+            stat.goalDifference = stat.goalsFor - stat.goalsAgainst;
+        });
+
+        stats.sort((a, b) => {
+            if (b.points !== a.points) return b.points - a.points;
+            if (b.goalDifference !== a.goalDifference) return b.goalDifference - a.goalDifference;
+            return b.goalsFor - a.goalsFor;
+        });
+        
+        return stats;
+    }
+
+
+    // --- RENDER FUNCTIONS ---
+    function renderTable(tableData) {
+        const container = document.getElementById('league-table-container');
+        if (teams.length === 0) {
+            container.innerHTML = `<p class="text-center text-slate-500 py-8">ยังไม่มีทีมในลีก โปรดเพิ่มทีมเพื่อเริ่มต้น</p>`;
+            return;
+        }
+        let tableHtml = `
+            <table class="w-full text-sm text-left text-slate-500">
+                <thead class="text-xs text-slate-700 uppercase bg-slate-100">
+                    <tr>
+                        <th scope="col" class="px-2 sm:px-4 py-3 text-center">อันดับ</th>
+                        <th scope="col" class="px-2 sm:px-6 py-3">ทีม</th>
+                        <th scope="col" class="px-2 py-3 text-center">แข่ง</th>
+                        <th scope="col" class="px-2 py-3 text-center">ชนะ</th>
+                        <th scope="col" class="px-2 py-3 text-center">เสมอ</th>
+                        <th scope="col" class="px-2 py-3 text-center">แพ้</th>
+                        <th scope="col" class="px-2 py-3 text-center hidden sm:table-cell">ได้</th>
+                        <th scope="col" class="px-2 py-3 text-center hidden sm:table-cell">เสีย</th>
+                        <th scope="col" class="px-2 py-3 text-center">+/-</th>
+                        <th scope="col" class="px-2 sm:px-4 py-3 text-center">คะแนน</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+        tableData.forEach((stat, index) => {
+            tableHtml += `
+                <tr class="bg-white border-b hover:bg-teal-50 cursor-pointer" data-team-id="${stat.id}" data-team-name="${stat.name}">
+                    <td class="px-2 sm:px-4 py-4 font-bold text-slate-900 text-center">${index + 1}</td>
+                    <th scope="row" class="px-2 sm:px-6 py-4 font-bold text-slate-900 whitespace-nowrap">${stat.name}</th>
+                    <td class="px-2 py-4 text-center">${stat.played}</td>
+                    <td class="px-2 py-4 text-center">${stat.win}</td>
+                    <td class="px-2 py-4 text-center">${stat.draw}</td>
+                    <td class="px-2 py-4 text-center">${stat.loss}</td>
+                    <td class="px-2 py-4 text-center hidden sm:table-cell">${stat.goalsFor}</td>
+                    <td class="px-2 py-4 text-center hidden sm:table-cell">${stat.goalsAgainst}</td>
+                    <td class="px-2 py-4 text-center">${stat.goalDifference}</td>
+                    <td class="px-2 sm:px-4 py-4 font-extrabold text-lg text-teal-600 text-center">${stat.points}</td>
+                </tr>
+            `;
+        });
+        tableHtml += `</tbody></table>`;
+        container.innerHTML = tableHtml;
+
+        document.querySelectorAll('#league-table-container tr[data-team-id]').forEach(row => {
+            row.addEventListener('click', () => {
+                const teamId = row.dataset.teamId;
+                const teamName = row.dataset.teamName;
+                const teamData = tableData.find(t => t.id === teamId);
+                if (teamData) {
+                    updateTeamWDLChart(teamData, teamName);
+                }
+            });
+        });
+    }
+
+    function renderTeamManagement() {
+        const teamListContainer = document.getElementById('team-list');
+        teamListContainer.innerHTML = '';
+        if (teams.length === 0) {
+            teamListContainer.innerHTML = `<p class="text-center text-slate-400 text-sm">ยังไม่มีทีม</p>`;
+        }
+        teams.forEach(team => {
+            const teamEl = document.createElement('div');
+            teamEl.className = 'flex justify-between items-center bg-slate-100 p-2 rounded-lg';
+            teamEl.innerHTML = `
+                <span class="text-slate-700">${team.name}</span>
+                <button data-id="${team.id}" class="delete-team-btn text-red-500 hover:text-red-700 font-bold text-xl">&times;</button>
+            `;
+            teamListContainer.appendChild(teamEl);
+        });
+
+        document.querySelectorAll('.delete-team-btn').forEach(button => {
+            button.addEventListener('click', (e) => {
+                const teamId = e.target.dataset.id;
+                handleDeleteTeam(teamId);
+            });
+        });
+    }
+
+    function renderMatchForm() {
+        const homeSelect = document.getElementById('home-team');
+        const awaySelect = document.getElementById('away-team');
+        homeSelect.innerHTML = '<option value="">-- เลือกทีมเหย้า --</option>';
+        awaySelect.innerHTML = '<option value="">-- เลือกทีมเยือน --</option>';
+
+        teams.forEach(team => {
+            homeSelect.innerHTML += `<option value="${team.id}">${team.name}</option>`;
+            awaySelect.innerHTML += `<option value="${team.id}">${team.name}</option>`;
+        });
+        
+        const matchFormSection = document.getElementById('match-form-section');
+        if (teams.length < 2) {
+             matchFormSection.style.opacity = '0.5';
+             matchFormSection.style.pointerEvents = 'none';
+        } else {
+             matchFormSection.style.opacity = '1';
+             matchFormSection.style.pointerEvents = 'auto';
+        }
+    }
+
+    function renderMatchHistory() {
+        const historyContainer = document.getElementById('match-history-list');
+        historyContainer.innerHTML = '';
+        if (matches.length === 0) {
+            historyContainer.innerHTML = `<p class="text-center text-slate-400 text-sm">ยังไม่มีการแข่งขัน</p>`;
+        }
+
+        matches.forEach(match => {
+            const homeTeamName = teams.find(t => t.id === match.homeTeamId)?.name || 'Unknown';
+            const awayTeamName = teams.find(t => t.id === match.awayTeamId)?.name || 'Unknown';
+
+            const matchEl = document.createElement('div');
+            matchEl.className = 'bg-slate-50 p-3 rounded-lg border border-slate-200';
+            matchEl.innerHTML = `
+                <div class="flex justify-between items-center text-slate-700 font-semibold mb-2">
+                    <span>${homeTeamName} ${match.homeScore} - ${match.awayScore} ${awayTeamName}</span>
+                </div>
+                <div class="flex justify-end space-x-2">
+                    <button data-id="${match.id}" class="edit-match-btn bg-yellow-500 text-white text-xs font-bold py-1 px-3 rounded hover:bg-yellow-600 transition-colors">แก้ไข</button>
+                    <button data-id="${match.id}" class="delete-match-btn bg-red-500 text-white text-xs font-bold py-1 px-3 rounded hover:bg-red-600 transition-colors">ลบ</button>
+                </div>
+            `;
+            historyContainer.appendChild(matchEl);
+        });
+
+        document.querySelectorAll('.edit-match-btn').forEach(button => {
+            button.addEventListener('click', (e) => {
+                const matchId = e.target.dataset.id;
+                editMatch(matchId);
+            });
+        });
+
+        document.querySelectorAll('.delete-match-btn').forEach(button => {
+            button.addEventListener('click', (e) => {
+                const matchId = e.target.dataset.id;
+                deleteMatch(matchId);
+            });
+        });
+    }
+
+    // --- CHART FUNCTIONS ---
+    function initializeCharts(tableData) {
+        const pointsCtx = document.getElementById('points-chart').getContext('2d');
+        pointsChart = new Chart(pointsCtx, {
+            type: 'bar',
+            data: {
+                labels: tableData.map(t => t.name),
+                datasets: [{
+                    label: 'คะแนน',
+                    data: tableData.map(t => t.points),
+                    backgroundColor: 'rgba(13, 148, 136, 0.7)', // teal-600
+                    borderColor: 'rgba(15, 118, 110, 1)', // teal-700
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        titleFont: chartFont,
+                        bodyFont: chartFont,
+                    }
+                },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        ticks: {
+                           font: chartFont,
+                           callback: function(value) { if (value % 1 === 0) { return value; } }
+                        }
+                    },
+                    y: {
+                        ticks: { font: chartFont }
+                    }
+                }
+            }
+        });
+
+        const wdlCtx = document.getElementById('team-w-d-l-chart').getContext('2d');
+        teamWDLChart = new Chart(wdlCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['ชนะ', 'เสมอ', 'แพ้'],
+                datasets: [{
+                    data: [0, 0, 0], // Initial data
+                    backgroundColor: [
+                        'rgba(22, 163, 74, 0.8)',  // green-600
+                        'rgba(245, 158, 11, 0.8)', // amber-500
+                        'rgba(220, 38, 38, 0.8)'   // red-600
+                    ],
+                    borderColor: '#fff',
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { font: chartFont }
+                    },
+                    tooltip: {
+                        titleFont: chartFont,
+                        bodyFont: chartFont,
+                    }
+                }
+            }
+        });
+        updateTeamWDLChart(null);
+    }
+    
+    function updateCharts(tableData) {
+        if (!pointsChart) {
+            initializeCharts(tableData);
+        } else {
+            pointsChart.data.labels = tableData.map(t => t.name);
+            pointsChart.data.datasets[0].data = tableData.map(t => t.points);
+            pointsChart.update();
+        }
+        updateTeamWDLChart(null); // Reset team chart
+    }
+
+    function updateTeamWDLChart(teamData, teamName) {
+        const titleEl = document.getElementById('team-stats-title');
+        if (teamData) {
+            titleEl.textContent = `สถิติ: ${teamName}`;
+            teamWDLChart.data.datasets[0].data = [teamData.win, teamData.draw, teamData.loss];
+        } else {
+            titleEl.textContent = `สถิติ ชนะ/เสมอ/แพ้ (เลือกทีมจากตาราง)`;
+            const totalStats = calculateTableData().reduce((acc, team) => {
+                acc.win += team.win;
+                acc.draw += team.draw;
+                acc.loss += team.loss;
+                return acc;
+            }, { win: 0, draw: 0, loss: 0 });
+            teamWDLChart.data.datasets[0].data = [totalStats.win, totalStats.draw, totalStats.loss];
+        }
+        teamWDLChart.update();
+    }
+
+
+    // --- EVENT HANDLERS & FIREBASE INTERACTION LOGIC ---
+    const matchForm = document.getElementById('match-form');
+    const submitMatchBtn = document.getElementById('submit-match-btn');
+    const cancelEditBtn = document.getElementById('cancel-edit-btn');
+    const homeTeamSelect = document.getElementById('home-team');
+    const awayTeamSelect = document.getElementById('away-team');
+    const homeScoreInput = document.getElementById('home-score');
+    const awayScoreInput = document.getElementById('away-score');
+
+    document.getElementById('team-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const teamNameInput = document.getElementById('team-name');
+        const name = teamNameInput.value.trim();
+        if (name && !teams.find(t => t.name.toLowerCase() === name.toLowerCase())) {
+            if (db) {
+                try {
+                    await addDoc(collection(db, TEAMS_COLLECTION), { name: name });
+                    teamNameInput.value = '';
+                    showModal(`เพิ่มทีม "${name}" เรียบร้อย!`);
+                } catch (error) {
+                    console.error("Error adding team:", error);
+                    showModal("ข้อผิดพลาดในการเพิ่มทีม: " + error.message);
+                }
+            } else {
+                // Fallback for local-only mode (should not happen if Firebase is configured)
+                teams.push({ id: `local-${Date.now()}`, name: name });
+                teamNameInput.value = '';
+                mainRender();
+                showModal(`เพิ่มทีม "${name}" (Local) เรียบร้อย!`);
+            }
+        } else if (name) {
+            showModal(`มีทีมชื่อ "${name}" อยู่ในลีกแล้ว`);
+        } else {
+            showModal('กรุณากรอกชื่อทีม');
+        }
+    });
+    
+    matchForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const homeId = homeTeamSelect.value;
+        const awayId = awayTeamSelect.value;
+        const homeScore = parseInt(homeScoreInput.value);
+        const awayScore = parseInt(awayScoreInput.value);
+
+        if (!homeId || !awayId) {
+            showModal('กรุณาเลือกทั้งทีมเหย้าและทีมเยือน');
+            return;
+        }
+
+        if (homeId === awayId) {
+            showModal('ทีมเหย้าและทีมเยือนต้องเป็นคนละทีม');
+            return;
+        }
+
+        if (isNaN(homeScore) || isNaN(awayScore)) {
+            showModal('กรุณากรอกผลสกอร์ให้ครบถ้วน');
+            return;
+        }
+        
+        const matchData = {
+            homeTeamId: homeId,
+            awayTeamId: awayId,
+            homeScore: homeScore,
+            awayScore: awayScore
+        };
+
+        if (db) {
+            try {
+                if (editingMatchId !== null) {
+                    await setDoc(doc(db, MATCHES_COLLECTION, editingMatchId), matchData);
+                    showModal('อัปเดตผลการแข่งขันเรียบร้อย!');
+                } else {
+                    await addDoc(collection(db, MATCHES_COLLECTION), matchData);
+                    showModal('บันทึกผลการแข่งขันเรียบร้อย!');
+                }
+            } catch (error) {
+                console.error("Error saving match:", error);
+                showModal("ข้อผิดพลาดในการบันทึกผล: " + error.message);
+            }
+        } else {
+             // Fallback for local-only mode
+            if (editingMatchId !== null) {
+                const matchIndex = matches.findIndex(m => m.id === editingMatchId);
+                if (matchIndex !== -1) {
+                    matches[matchIndex] = { ...matches[matchIndex], ...matchData };
+                    showModal('อัปเดตผลการแข่งขัน (Local) เรียบร้อย!');
+                }
+            } else {
+                matches.push({ id: `local-m-${Date.now()}`, ...matchData });
+                showModal('บันทึกผลการแข่งขัน (Local) เรียบร้อย!');
+            }
+        }
+
+        editingMatchId = null;
+        matchForm.reset();
+        submitMatchBtn.textContent = 'บันทึกผล';
+        cancelEditBtn.classList.add('hidden');
+        homeTeamSelect.disabled = false;
+        awayTeamSelect.disabled = false;
+        mainRender();
+    });
+
+    cancelEditBtn.addEventListener('click', () => {
+        editingMatchId = null;
+        matchForm.reset();
+        submitMatchBtn.textContent = 'บันทึกผล';
+        cancelEditBtn.classList.add('hidden');
+        homeTeamSelect.disabled = false;
+        awayTeamSelect.disabled = false;
+    });
+
+    async function handleDeleteTeam(teamId) {
+        const teamMatches = matches.filter(m => m.homeTeamId === teamId || m.awayTeamId === teamId);
+        if (teamMatches.length > 0) {
+            showModal('ไม่สามารถลบทีมได้ เนื่องจากมีผลการแข่งขันของทีมนี้อยู่ กรุณาลบผลการแข่งขันที่เกี่ยวข้องก่อน');
+            return;
+        }
+        
+        if (db) {
+            try {
+                await deleteDoc(doc(db, TEAMS_COLLECTION, teamId));
+                showModal('ลบทีมเรียบร้อย!');
+            } catch (error) {
+                console.error("Error deleting team:", error);
+                showModal("ข้อผิดพลาดในการลบทีม: " + error.message);
+            }
+        } else {
+            teams = teams.filter(t => t.id !== teamId);
+            mainRender();
+            showModal('ลบทีม (Local) เรียบร้อย!');
+        }
+    }
+
+    function editMatch(matchId) {
+        const matchToEdit = matches.find(m => m.id === matchId);
+        if (matchToEdit) {
+            editingMatchId = matchId;
+            homeTeamSelect.value = matchToEdit.homeTeamId;
+            awayTeamSelect.value = matchToEdit.awayTeamId;
+            homeScoreInput.value = matchToEdit.homeScore;
+            awayScoreInput.value = matchToEdit.awayScore;
+
+            submitMatchBtn.textContent = 'อัปเดตผล';
+            cancelEditBtn.classList.remove('hidden');
+            
+            homeTeamSelect.disabled = true;
+            awayTeamSelect.disabled = true;
+
+            document.getElementById('match-form-section').scrollIntoView({ behavior: 'smooth' });
+        }
+    }
+
+    async function deleteMatch(matchId) {
+        if (db) {
+            try {
+                await deleteDoc(doc(db, MATCHES_COLLECTION, matchId));
+                showModal('ลบผลการแข่งขันเรียบร้อย!');
+            } catch (error) {
+                console.error("Error deleting match:", error);
+                showModal("ข้อผิดพลาดในการลบผลการแข่งขัน: " + error.message);
+            }
+        } else {
+            matches = matches.filter(m => m.id !== matchId);
+            mainRender();
+            showModal('ลบผลการแข่งขัน (Local) เรียบร้อย!');
+        }
+
+        if (editingMatchId === matchId) { 
+            editingMatchId = null;
+            matchForm.reset();
+            submitMatchBtn.textContent = 'บันทึกผล';
+            cancelEditBtn.classList.add('hidden');
+            homeTeamSelect.disabled = false;
+            awayTeamSelect.disabled = false;
+        }
+    }
+    
+    // --- Public View Mode ---
+    function checkPublicView() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const viewMode = urlParams.get('view');
+        const managementAside = document.getElementById('management-analytics-aside');
+        const shareLinkSection = document.getElementById('share-link-section');
+
+        if (viewMode === 'public') {
+            managementAside.classList.add('hidden');
+            shareLinkSection.classList.add('hidden'); // Hide share link in public view
+        } else {
+            managementAside.classList.remove('hidden');
+            shareLinkSection.classList.remove('hidden'); // Show share link in management view
+            document.getElementById('share-link-input').value = window.location.origin + window.location.pathname + '?view=public';
+        }
+    }
+
+    document.getElementById('copy-share-link-btn').addEventListener('click', () => {
+        const shareLinkInput = document.getElementById('share-link-input');
+        shareLinkInput.select();
+        document.execCommand('copy'); // Fallback for older browsers
+        showModal('คัดลอกลิงก์แล้ว!');
+    });
+
+    // --- INITIAL RENDER ---
+    function mainRender() {
+        const tableData = calculateTableData();
+        renderTable(tableData);
+        renderTeamManagement();
+        renderMatchForm();
+        renderMatchHistory();
+        updateCharts(tableData);
+        checkPublicView(); // Check URL for public view mode
+    }
+
+    // Initialize Firebase and set up listeners when DOM is ready
+    document.addEventListener('DOMContentLoaded', async () => {
+        if (Object.keys(firebaseConfig).length > 0) {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                    document.getElementById('user-id-display').textContent = `รหัสผู้ใช้: ${userId}`;
+                    console.log("Firebase Auth Ready. User ID:", userId);
+                    initFirestoreListeners(); // Call listeners after auth is ready
+                } else {
+                    try {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (error) {
+                        console.error("Firebase Auth error:", error);
+                        showModal("ข้อผิดพลาดในการยืนยันตัวตน: " + error.message);
+                        loadingOverlay.classList.add('hidden');
+                    }
+                }
+                // mainRender() will be called by initFirestoreListeners or initLocalData
+            });
+        } else {
+            console.warn("Firebase config not found. Running in local-only mode.");
+            loadingOverlay.classList.add('hidden');
+            initLocalData();
+            mainRender();
+        }
+    });
+</script>
+
+</body>
+</html>
